@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+
+const BackgroundScene = lazy(() => import('./BackgroundScene'));
 
 /** Mic stays open this long each turn; then your message is sent and the AI speaks. */
 const LISTEN_WINDOW_MS = 4000;
@@ -506,7 +508,6 @@ Work history (as "I was / I am"):
     setChatStage('greeting');
   };
 
-  const particleArray = Array.from({ length: 24 });
   const waveBars = Array.from({ length: 16 });
   const talkWaveBars = Array.from({ length: 14 });
 
@@ -515,12 +516,9 @@ Work history (as "I was / I am"):
       {/* Animated gradient background */}
       <div className="bg-gradient" />
 
-      {/* Floating particles */}
-      <div className="particle-layer">
-        {particleArray.map((_, i) => (
-          <span key={i} className={`particle particle-${i + 1}`} />
-        ))}
-      </div>
+      <Suspense fallback={null}>
+        <BackgroundScene />
+      </Suspense>
 
       {/* Main content */}
       <div className="app-shell">
@@ -831,45 +829,19 @@ Work history (as "I was / I am"):
           z-index: -3;
         }
 
-        .particle-layer {
+        .three-bg-root {
           position: fixed;
           inset: 0;
-          overflow: hidden;
-          pointer-events: none;
           z-index: -2;
+          pointer-events: none;
+          overflow: hidden;
         }
 
-        .particle {
-          position: absolute;
-          width: 6px;
-          height: 6px;
-          border-radius: 999px;
-          background: radial-gradient(circle at 30% 30%, #fff7ed, #f472b6);
-          box-shadow: 0 0 18px rgba(244, 114, 182, 0.95), 0 0 28px rgba(34, 211, 238, 0.5);
-          opacity: 0.55;
-          animation: floatParticle 26s linear infinite;
+        .three-bg-root canvas {
+          display: block;
+          width: 100%;
+          height: 100%;
         }
-
-        /* Distribute particles with different positions/speeds */
-        ${Array.from({ length: 24 })
-          .map((_, i) => {
-            const idx = i + 1;
-            const left = (idx * 37) % 100;
-            const delay = (idx * 1.7) % 20;
-            const duration = 18 + (idx % 7);
-            const size = 4 + (idx % 4);
-            return `
-              .particle-${idx} {
-                left: ${left}%;
-                top: ${idx % 2 === 0 ? '110%' : '-10%'};
-                width: ${size}px;
-                height: ${size}px;
-                animation-duration: ${duration}s;
-                animation-delay: -${delay}s;
-              }
-            `;
-          })
-          .join('\n')}
 
         .app-shell {
           position: relative;
@@ -1534,18 +1506,6 @@ Work history (as "I was / I am"):
           }
           100% {
             background-position: 200% center;
-          }
-        }
-
-        @keyframes floatParticle {
-          0% {
-            transform: translate3d(0, 0, 0);
-          }
-          50% {
-            transform: translate3d(10px, -40vh, 0);
-          }
-          100% {
-            transform: translate3d(-10px, -80vh, 0);
           }
         }
 
