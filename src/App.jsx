@@ -1,26 +1,50 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 /** Mic stays open this long each turn; then your message is sent and the AI speaks. */
-const LISTEN_WINDOW_MS = 7000;
+const LISTEN_WINDOW_MS = 4000;
 /** Pause after TTS ends before opening the mic (reduces echo / cut-off). */
 const MS_AFTER_SPEAK_BEFORE_LISTEN = 1600;
 
+/** Local: Vite proxy adds the key. Vercel: `api/messages.js` adds the key. Never put the secret in the React bundle. */
+function anthropicMessagesUrl() {
+  return '/api/messages';
+}
+
+function anthropicRequestHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+}
+
+const FEMALE_VOICE_HINT =
+  /Aria|Jenny|Emma|Zira|Michelle|Karen|Samantha|Victoria|Fiona|Susan|Isabella|Lucy|Hazel|Allison|Ashley|Cora|Elizabeth|Sara|Joanna|Ava|Natasha|Serena|Olivia|Nancy/i;
+
+/** Prefer male-presenting English voices (browser-dependent; Edge has the best Microsoft set). */
 function pickBestEnglishVoice(voices) {
-  const prefer = [
+  if (!voices?.length) return null;
+
+  const tiers = [
     (v) =>
       /^en/i.test(v.lang) &&
-      /Microsoft\s+(Aria|Jenny|Guy|Davis|Zira|Andrew|Emma|Brian|Natasha|Ryan)/i.test(v.name),
-    (v) => /^en-US/i.test(v.lang) && /Google\s+en-US/i.test(v.name),
-    (v) => /^en/i.test(v.lang) && /(Neural|Natural|Premium|Enhanced)/i.test(v.name),
-    (v) => /^en-US/i.test(v.lang) && v.localService === false,
-    (v) => /^en-US/i.test(v.lang),
+      /Microsoft\s+(Guy|Davis|Andrew|Brian|Jason|Eric|Christopher|Tony|Roger|Steffan|Ryan)/i.test(v.name),
+    (v) => /^en/i.test(v.lang) && /\bMale\b/i.test(v.name),
+    (v) =>
+      /^en/i.test(v.lang) &&
+      !FEMALE_VOICE_HINT.test(v.name) &&
+      /(Guy|Davis|Brian|Andrew|David|Daniel|George|James|Thomas|Mark|Fred|Ken|Roger|Aaron|Henry|Arthur)/i.test(v.name),
+    (v) => /^en-US/i.test(v.lang) && /Google\s+en-US.*Male/i.test(v.name),
+    (v) => /^en-US/i.test(v.lang) && !FEMALE_VOICE_HINT.test(v.name) && /(Neural|Natural|Premium|Enhanced)/i.test(v.name),
+    (v) => /^en-US/i.test(v.lang) && !FEMALE_VOICE_HINT.test(v.name),
+    (v) => /^en/i.test(v.lang) && !FEMALE_VOICE_HINT.test(v.name),
     (v) => /^en/i.test(v.lang),
   ];
-  for (const pred of prefer) {
+
+  for (const pred of tiers) {
     const v = voices.find(pred);
     if (v) return v;
   }
-  return voices.find((v) => /^en/i.test(v.lang)) || voices[0] || null;
+  return voices[0];
 }
 
 export default function KandarpResume() {
@@ -37,6 +61,8 @@ export default function KandarpResume() {
   const recognitionRef = useRef(null);
   const synthRef = useRef(null);
   const selectedVoiceRef = useRef(null);
+  /** Once we pick a male voice, keep it for the whole session (no switching on every line). */
+  const lockedVoiceUriRef = useRef(null);
   const voiceActiveRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -65,11 +91,26 @@ export default function KandarpResume() {
     chatStageRef.current = chatStage;
   }, [chatStage]);
 
-  // Pick the least-robotic English voice the browser exposes (Edge often has Microsoft Neural voices).
+  // Pick one male English voice on load and lock it; only change if that voice disappears.
   useEffect(() => {
     const pickVoice = () => {
       const voices = window.speechSynthesis?.getVoices?.() || [];
-      selectedVoiceRef.current = pickBestEnglishVoice(voices);
+      if (!voices.length) return;
+
+      if (lockedVoiceUriRef.current) {
+        const still = voices.find((v) => v.voiceURI === lockedVoiceUriRef.current);
+        if (still) {
+          selectedVoiceRef.current = still;
+          return;
+        }
+        lockedVoiceUriRef.current = null;
+      }
+
+      const v = pickBestEnglishVoice(voices);
+      if (v) {
+        lockedVoiceUriRef.current = v.voiceURI;
+        selectedVoiceRef.current = v;
+      }
     };
     pickVoice();
     window.speechSynthesis?.addEventListener?.('voiceschanged', pickVoice);
@@ -265,16 +306,12 @@ export default function KandarpResume() {
     return new Promise((resolve) => {
       if (synthRef.current) {
         synthRef.current.cancel();
-        const voices = window.speechSynthesis?.getVoices?.() || [];
-        if (voices.length && !selectedVoiceRef.current) {
-          selectedVoiceRef.current = pickBestEnglishVoice(voices);
-        }
         const utterance = new SpeechSynthesisUtterance(text);
         const v = selectedVoiceRef.current;
         utterance.lang = v?.lang || 'en-US';
         utterance.voice = v || null;
         utterance.rate = 0.93;
-        utterance.pitch = 1.05;
+        utterance.pitch = 0.88;
         utterance.volume = 1.0;
 
         utterance.onstart = () => {
@@ -329,7 +366,7 @@ export default function KandarpResume() {
       lowerText.includes('real kandarp')
     ) {
       const response =
-        "Sure! Here's how to reach the real Kandarp. Phone: +91 8109901136. Email: mathurkandarp@gmail.com. LinkedIn: linkedin.com/in/kandarpmathur14. Feel free to mention you chatted with my AI first!";
+        "Sure—here's how to reach me directly. Phone +91 8109901136, email mathurkandarp@gmail.com, LinkedIn linkedin.com/in/kandarpmathur14. If you tell me you found me through this voice resume, I'll remember the context.";
       setChatHistory((prev) => [...prev, { role: 'assistant', content: response }]);
       await speak(response);
       scheduleAfterSpeak();
@@ -337,38 +374,43 @@ export default function KandarpResume() {
     }
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      setError('');
+      const response = await fetch(anthropicMessagesUrl(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.REACT_APP_ANTHROPIC_API_KEY || 'YOUR_API_KEY_HERE',
-          'anthropic-version': '2023-06-01',
-        },
+        headers: anthropicRequestHeaders(),
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 300,
-          system: `You are an AI voice assistant representing Kandarp Mathur, a Product Owner based in Ahmedabad, India. Keep responses conversational and concise for voice (2-3 sentences max).
+          system: `You ARE Kandarp Mathur on a live voice call about your own career. Speak ONLY in the first person: always "I", "me", "my", "I've"—never describe yourself as "Kandarp" in third person, never "he" or "him" for yourself. You are not an assistant talking about someone else; you are Kandarp talking to a visitor.
 
-CORE INFO:
-- Current: Product Owner for OMAP™ at AltaDX (AI micro-agents platform for fitness/wellness)
-- Expertise: Product management, AI agents, Agile/Scrum, Power BI, SQL, APIs
-- Projects: OMAP™ (100+ fitness operators), Round1 (AI interview screening), Analystbychance (1000+ mentees)
-- Skills: Product Management, Agile/Scrum/SAFe, Power BI, SQL, APIs, AI/ML, JIRA, Confluence
-- Certifications: CSM®, SAFe® 6 POPM, Salesforce AI Associate
-- Education: B.E. Mechanical Engineering (2009-2013)
+Keep answers short for voice: about two or three sentences. Sound warm and human.
 
-WORK HISTORY:
-- AltaDX (2025-now): Product Owner for AI agents
-- KTek Resourcing (2019-2025): Business Analyst
-- Wealth It Global (2014-2018): Reporting Analyst
+Facts (phrase as your own experience):
+- You are a Product Owner in Ahmedabad, India.
+- You own OMAP™ at AltaDX—an AI micro-agents platform for fitness and wellness enterprises.
+- You work with product management, AI agents, Agile and Scrum, Power BI, SQL, and APIs.
+- Projects you lead or built include OMAP™ (100+ fitness operators), Round1 (AI interview screening), and Analystbychance (1000+ mentees).
+- Skills include Product Management, Agile, Scrum, SAFe, Power BI, SQL, APIs, AI and ML, JIRA, Confluence.
+- Certifications: CSM®, SAFe® 6 POPM, Salesforce AI Associate.
+- Education: B.E. Mechanical Engineering, 2009–2013.
 
-Keep it conversational, friendly, professional. This is voice conversation, so be natural and brief.`,
+Work history (as "I was / I am"):
+- AltaDX from 2025: Product Owner for AI agents.
+- KTek Resourcing 2019–2025: Business Analyst.
+- Wealth It Global 2014–2018: Reporting Analyst.`,
           messages: [{ role: 'user', content: trimmed }],
         }),
       });
 
       if (!response.ok) {
-        throw new Error('API request failed');
+        let detail = `${response.status}`;
+        try {
+          const errBody = await response.json();
+          detail = errBody?.error?.message || errBody?.message || JSON.stringify(errBody);
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail);
       }
 
       const data = await response.json();
@@ -379,8 +421,13 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
       scheduleAfterSpeak();
     } catch (error) {
       console.error('Error calling Claude API:', error);
+      setError(
+        import.meta.env.DEV
+          ? 'Could not reach Claude. Put ANTHROPIC_API_KEY in a `.env` file here (see .env.example), then restart npm run dev.'
+          : 'Could not reach Claude. In Vercel → your project → Settings → Environment Variables, add ANTHROPIC_API_KEY, then redeploy.'
+      );
       const fallbackResponse =
-        "I'm having trouble connecting right now. But I can tell you that Kandarp is a Product Owner at AltaDX, building AI agents for fitness and wellness enterprises. Would you like to know more about his experience?";
+        "I'm having a little trouble reaching my AI backend right now. I'm still a Product Owner at AltaDX, building AI agents for fitness and wellness—want me to describe what I do there in plain words?";
       setChatHistory((prev) => [...prev, { role: 'assistant', content: fallbackResponse }]);
       await speak(fallbackResponse);
       scheduleAfterSpeak();
@@ -393,10 +440,22 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
   const toggleVoice = async () => {
     if (!voiceActive) {
       setError('');
+      if (navigator.mediaDevices?.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach((t) => t.stop());
+        } catch (e) {
+          console.error(e);
+          setError(
+            'Microphone was blocked. In Chrome: click the lock icon next to the URL → Site settings → Microphone → Allow (not “Ask every time”), then try again.'
+          );
+          return;
+        }
+      }
       setVoiceActive(true);
       setChatHistory([]);
       setChatStage('greeting');
-      const greeting = "Hey! This is Kandarp. What's your name?";
+      const greeting = "Hey—I'm Kandarp. What's your name?";
       setChatHistory([{ role: 'assistant', content: greeting }]);
       await speak(greeting);
       scheduleAfterSpeak();
@@ -449,6 +508,7 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
 
   const particleArray = Array.from({ length: 24 });
   const waveBars = Array.from({ length: 16 });
+  const talkWaveBars = Array.from({ length: 14 });
 
   return (
     <div className="app-root">
@@ -660,33 +720,31 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
         </main>
       </div>
 
-      {/* Voice button + chat */}
-      <div className="voice-launcher">
+      <div className="talk-wave-float">
         <button
+          type="button"
+          className={`talk-wave-btn ${voiceActive ? 'talk-wave-btn--on' : ''} ${isListening ? 'talk-wave-btn--listen' : ''} ${isSpeaking ? 'talk-wave-btn--speak' : ''}`}
           onClick={toggleVoice}
-          className={`voice-orb ${voiceActive ? 'voice-orb--active' : ''}`}
-          aria-label="Toggle AI voice chat"
+          aria-label="Talk to me — voice resume"
         >
-          <div className="orb-core">{voiceActive ? '🔴' : '🎤'}</div>
-          <div className="orb-ring orb-ring-1" />
-          <div className="orb-ring orb-ring-2" />
-          <div className="orb-glow" />
+          {talkWaveBars.map((_, i) => (
+            <span key={i} className="talk-bar" style={{ animationDelay: `${-i * 0.07}s` }} aria-hidden />
+          ))}
         </button>
-        <div className="voice-label">
-          {voiceActive ? 'Voice resume is live' : 'Tap to talk to AI Kandarp'}
-        </div>
+        <p className="talk-wave-label">Talk to me</p>
+        {voiceActive && <span className="talk-wave-hint">Tap again to stop</span>}
       </div>
 
       {voiceActive && (
         <div className="voice-panel glass-card">
           <div className="voice-panel-header">
             <div>
-              <div className="voice-panel-title">AI Voice Resume</div>
+              <div className="voice-panel-title">Voice chat</div>
               <div className="voice-panel-subtitle">
                 {isSpeaking
-                  ? 'Answering…'
+                  ? "I'm speaking…"
                   : isListening
-                    ? `Your turn — speak freely (${listenSecondsLeft ?? 7}s window, then I reply).`
+                    ? `Your turn — speak freely (${listenSecondsLeft ?? 4}s window, then I reply).`
                     : 'After I speak, the mic opens after a short pause.'}
               </div>
             </div>
@@ -705,7 +763,7 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
 
           <div className="voice-panel-body">
             {chatHistory.length === 0 && (
-              <p className="voice-placeholder">Initializing AI Kandarp… you’ll hear a greeting in a moment.</p>
+              <p className="voice-placeholder">Starting voice mode… you'll hear me in a second.</p>
             )}
 
             {chatHistory.map((msg, idx) => (
@@ -713,7 +771,7 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
                 key={idx}
                 className={`chat-bubble chat-bubble--${msg.role === 'user' ? 'user' : 'assistant'}`}
               >
-                <div className="chat-label">{msg.role === 'user' ? (userName || 'You') : 'Kandarp · AI'}</div>
+                <div className="chat-label">{msg.role === 'user' ? (userName || 'You') : 'Kandarp'}</div>
                 <div className="chat-text">{msg.content}</div>
               </div>
             ))}
@@ -728,7 +786,7 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
             {isSpeaking && (
               <div className="status-pill status-pill--speaking">
                 <span className="dot" />
-                Speaking…
+                I&apos;m speaking…
               </div>
             )}
 
@@ -737,10 +795,10 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
 
           <div className="voice-panel-footer">
             {isSpeaking
-              ? 'AI is speaking…'
+              ? "I'm speaking…"
               : isListening
-                ? '7-second listen turn: everything you say in this window is sent as one message.'
-                : 'Flow: I finish talking → brief pause → 7s listen → I answer. Best in Microsoft Edge for natural voices.'}
+                ? '4-second turn: say everything in this window as one message.'
+                : 'I talk → short pause → you get 4 seconds → I reply. Microsoft Edge usually has the clearest male voices.'}
           </div>
         </div>
       )}
@@ -817,7 +875,7 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
           position: relative;
           max-width: 1120px;
           margin: 0 auto;
-          padding: 64px 16px 140px;
+          padding: 64px 16px 160px;
           z-index: 1;
         }
 
@@ -1161,124 +1219,106 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
           margin-bottom: 6px;
         }
 
-        /* Voice orb (2x bigger, neon) */
-        .voice-launcher {
+        /* Floating waveform — stays visible while scrolling */
+        .talk-wave-float {
           position: fixed;
-          right: 32px;
-          bottom: 32px;
+          left: 50%;
+          bottom: max(14px, env(safe-area-inset-bottom, 0px));
+          transform: translateX(-50%);
+          z-index: 50;
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 8px;
-          z-index: 20;
+          pointer-events: auto;
+          padding: 0 12px;
         }
 
-        @media (max-width: 640px) {
-          .voice-launcher {
-            right: 18px;
-            bottom: 18px;
-          }
-        }
-
-        .voice-orb {
-          position: relative;
-          width: 140px;
-          height: 140px;
-          border-radius: 999px;
-          border: none;
-          cursor: pointer;
-          background: radial-gradient(circle at 30% 20%, #e0f2fe, #22d3ee 35%, #0f172a 90%);
-          box-shadow:
-            0 0 0 1px rgba(15, 23, 42, 0.9),
-            0 0 40px rgba(34, 211, 238, 0.95),
-            0 0 80px rgba(168, 85, 247, 0.9);
-          padding: 0;
-          display: flex;
+        .talk-wave-btn {
+          display: inline-flex;
           align-items: center;
           justify-content: center;
-          transform-style: preserve-3d;
-          transition: transform 260ms ease, box-shadow 260ms ease;
-          animation: orbPulse 2.2s ease-in-out infinite;
-        }
-
-        .voice-orb--active {
-          background: radial-gradient(circle at 30% 20%, #fecaca, #f97373 35%, #1e293b 90%);
-          box-shadow:
-            0 0 0 1px rgba(15, 23, 42, 0.9),
-            0 0 40px rgba(248, 113, 113, 0.9),
-            0 0 90px rgba(248, 113, 113, 0.9);
-          animation: orbPulseActive 1.5s ease-in-out infinite;
-        }
-
-        .voice-orb:hover {
-          transform: translateY(-8px) scale(1.04) rotateX(12deg);
-          box-shadow:
-            0 0 0 1px rgba(15, 23, 42, 0.9),
-            0 0 60px rgba(34, 211, 238, 1),
-            0 0 120px rgba(168, 85, 247, 1);
-        }
-
-        .orb-core {
-          position: relative;
-          z-index: 2;
-          font-size: 48px;
-          filter: drop-shadow(0 0 12px rgba(15, 23, 42, 0.9));
-        }
-
-        .orb-ring {
-          position: absolute;
+          gap: 3px;
+          height: 36px;
+          min-width: 108px;
+          padding: 0 16px;
           border-radius: 999px;
-          border: 1px dashed rgba(226, 232, 240, 0.55);
-          inset: 10%;
-          animation: ringSpin 16s linear infinite;
-          mix-blend-mode: screen;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          background: rgba(15, 23, 42, 0.55);
+          backdrop-filter: blur(14px);
+          cursor: pointer;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
         }
 
-        .orb-ring-2 {
-          inset: 22%;
-          border-style: solid;
-          border-color: rgba(165, 180, 252, 0.6);
-          animation-duration: 26s;
-          animation-direction: reverse;
+        .talk-wave-btn:hover {
+          border-color: rgba(129, 140, 248, 0.55);
+          transform: translateY(-1px);
         }
 
-        .orb-glow {
-          position: absolute;
-          inset: -10%;
-          background: radial-gradient(circle at 50% 0, rgba(248, 250, 252, 0.7), transparent 70%);
-          mix-blend-mode: screen;
-          opacity: 0.9;
+        .talk-wave-btn:focus-visible {
+          outline: 2px solid #a5b4fc;
+          outline-offset: 3px;
         }
 
-        .voice-label {
+        .talk-wave-btn--on {
+          border-color: rgba(34, 211, 238, 0.45);
+          box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12), 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+
+        .talk-bar {
+          width: 3px;
+          height: 10px;
+          border-radius: 999px;
+          align-self: center;
+          background: linear-gradient(to top, rgba(99, 102, 241, 0.35), rgba(34, 211, 238, 0.95));
+          opacity: 0.85;
+          animation: talkBarIdle 1.25s ease-in-out infinite;
+        }
+
+        .talk-wave-btn--listen .talk-bar,
+        .talk-wave-btn--speak .talk-bar {
+          animation: talkBarActive 0.42s ease-in-out infinite alternate;
+          background: linear-gradient(to top, rgba(168, 85, 247, 0.4), rgba(52, 211, 153, 0.95));
+        }
+
+        .talk-wave-btn--speak .talk-bar {
+          background: linear-gradient(to top, rgba(244, 114, 182, 0.45), rgba(250, 204, 21, 0.95));
+        }
+
+        .talk-wave-label {
+          margin: 8px 0 0;
           font-size: 11px;
-          padding: 6px 10px;
-          border-radius: 999px;
-          background: rgba(15, 23, 42, 0.86);
-          border: 1px solid rgba(148, 163, 184, 0.6);
-          color: #e5e7eb;
-          white-space: nowrap;
-          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.9);
+          font-weight: 600;
+          letter-spacing: 0.28em;
+          text-transform: uppercase;
+          color: #e2e8f0;
+          text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 14px rgba(0, 0, 0, 0.65);
+        }
+
+        .talk-wave-hint {
+          margin-top: 4px;
+          font-size: 10px;
+          color: rgba(226, 232, 240, 0.95);
+          text-align: center;
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
         }
 
         .voice-panel {
           position: fixed;
-          right: 32px;
-          bottom: 200px;
-          width: 340px;
-          max-height: 430px;
+          left: 50%;
+          bottom: 118px;
+          transform: translateX(-50%);
+          width: min(380px, calc(100vw - 24px));
+          max-height: min(430px, 42vh);
           display: flex;
           flex-direction: column;
           gap: 0;
-          z-index: 18;
+          z-index: 40;
         }
 
         @media (max-width: 640px) {
           .voice-panel {
-            right: 12px;
-            left: 12px;
-            bottom: 190px;
-            width: auto;
+            bottom: 112px;
+            max-height: min(380px, 48vh);
           }
         }
 
@@ -1518,44 +1558,26 @@ Keep it conversational, friendly, professional. This is voice conversation, so b
           }
         }
 
-        @keyframes orbPulse {
+        @keyframes talkBarIdle {
           0%,
           100% {
-            box-shadow:
-              0 0 0 1px rgba(15, 23, 42, 0.9),
-              0 0 40px rgba(34, 211, 238, 0.6),
-              0 0 80px rgba(56, 189, 248, 0.6);
+            height: 6px;
+            opacity: 0.55;
           }
           50% {
-            box-shadow:
-              0 0 0 1px rgba(15, 23, 42, 0.9),
-              0 0 60px rgba(34, 211, 238, 0.95),
-              0 0 120px rgba(168, 85, 247, 0.95);
+            height: 14px;
+            opacity: 1;
           }
         }
 
-        @keyframes orbPulseActive {
-          0%,
-          100% {
-            box-shadow:
-              0 0 0 1px rgba(15, 23, 42, 0.9),
-              0 0 40px rgba(248, 113, 113, 0.7),
-              0 0 90px rgba(248, 113, 113, 0.85);
-          }
-          50% {
-            box-shadow:
-              0 0 0 1px rgba(15, 23, 42, 0.9),
-              0 0 70px rgba(248, 113, 113, 1),
-              0 0 130px rgba(248, 113, 113, 1);
-          }
-        }
-
-        @keyframes ringSpin {
+        @keyframes talkBarActive {
           0% {
-            transform: rotate(0deg);
+            height: 5px;
+            opacity: 0.65;
           }
           100% {
-            transform: rotate(360deg);
+            height: 20px;
+            opacity: 1;
           }
         }
 
