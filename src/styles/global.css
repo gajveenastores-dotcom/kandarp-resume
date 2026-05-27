@@ -381,6 +381,49 @@ body {
   transition: height 0.5s ease;
 }
 
+/* Download resume CTA */
+.download-btn {
+  position: fixed;
+  top: 28px;
+  left: 28px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border: 1px solid var(--accent-dim);
+  background: rgba(8, 8, 8, 0.92);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: border-color 0.25s, box-shadow 0.25s, opacity 0.25s;
+}
+
+.download-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 24px rgba(201, 169, 98, 0.15);
+}
+
+.download-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.download-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--accent-dim);
+  font-size: 11px;
+  color: var(--accent);
+}
+
 /* Talk to me */
 .talk-btn {
   position: fixed;
@@ -583,6 +626,19 @@ body {
 }
 
 @media (max-width: 768px) {
+  .download-btn {
+    top: 16px;
+    left: 16px;
+    padding: 10px 14px;
+    font-size: 10px;
+  }
+
+  .download-btn-icon {
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+  }
+
   .chapter-nav {
     right: 12px;
     gap: 6px;
